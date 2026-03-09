@@ -1,0 +1,186 @@
+﻿@page "/Professional/Examples/CashRegister"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using System.ComponentModel.DataAnnotations
+@implements IDisposable
+
+@code {
+    private Register register = new Register();
+    public required EditContext RegisterContext;
+    public required ValidationMessageStore messageStore;
+    public bool isRandom = false;
+
+    private enum Denominations
+    {
+        Twentys = 2000,
+        Tens = 1000,
+        Fives = 500,
+        Ones = 100,
+        Quarters = 25,
+        Dimes = 10,
+        Nickels = 5,
+        Pennies = 1,
+    }
+
+    protected override void OnInitialized()
+    {
+        RegisterContext = new(register);
+        RegisterContext.OnValidationRequested += HandleValidationRequested;
+        messageStore = new(RegisterContext);
+        register.Randomizer = 3;
+    }
+
+    private void HandleValidationRequested(object? sender,
+        ValidationRequestedEventArgs args)
+    {
+        messageStore?.Clear();
+
+        // Custom validation logic
+        if (register.Total <= 0)
+        {
+            messageStore?.Add(() => register.Total, "Total must be greater than $0.00");
+        }
+        if (register.Total != null && register.Paid != null && register.Paid < register.Total)
+        {
+            messageStore?.Add(() => register.Paid, "Please enter an amount greater than or equal to the total");
+        }
+    }
+
+    public void Dispose()
+    {
+        if (RegisterContext is not null)
+        {
+            RegisterContext.OnValidationRequested -= HandleValidationRequested;
+        }
+    }
+
+    private void GetChange()
+    {
+        register.Change = (double)register.Paid - (double)register.Total;
+        int tempChange = (int)(register.Change * 100);
+        if (tempChange % register.Randomizer == 0)
+        {
+            GetRandomChange(tempChange);
+        }
+        else
+        {
+            MakeRegularChange(tempChange);
+        }
+    }
+
+    /// <summary>
+    /// Goes through each denomination, starting with the largest, and determines how many of that denomination to return, then subtracts that amount from the change. If the change is less than the denomination, it moves on to the next smaller denomination. This results in the least amount of bills and coins being returned.
+    ///</summary>
+    private void MakeRegularChange(int tempChange)
+    {
+        var sortedDenominations = Enum.GetValues(typeof(Denominations)).Cast<int>().OrderByDescending(x => x);
+        foreach (int value in sortedDenominations)
+        {
+            if (tempChange >= value)
+            {
+                int count = tempChange / value;
+                register.BillsAndCoins[(Denominations)value] = count;
+                tempChange -= (count * value);
+            }
+        }
+    }
+
+    private void GetRandomChange(int tempChange)
+    {
+        isRandom = true;
+        var random = new Random();
+        var denominations = Enum.GetValues(typeof(Denominations)).Cast<int>().ToList();
+        while (tempChange > 0)
+        {
+            int randomIndex = random.Next(denominations.Count);
+            int denominationValue = denominations[randomIndex];
+            if (tempChange >= denominationValue)
+            {
+                register.BillsAndCoins[(Denominations)denominationValue]++;
+                tempChange -= denominationValue;
+            }
+        }
+    }
+
+    private void ResetRegister()
+    {
+        register = new Register();
+        isRandom = false;
+        StateHasChanged();
+    }
+
+    private class Register
+    {
+
+        public Dictionary<Denominations, int> BillsAndCoins { get; set; } = new Dictionary<Denominations, int>()
+        {
+            {Denominations.Twentys, 0},
+            {Denominations.Tens, 0},
+            {Denominations.Fives, 0},
+            {Denominations.Ones, 0},
+            {Denominations.Quarters, 0},
+            {Denominations.Dimes, 0},
+            {Denominations.Nickels, 0},
+            {Denominations.Pennies, 0},
+        };
+        public double Change { get; set; } = -1;
+        [Required(ErrorMessage = "Randomizer may not be left empty")]
+        public decimal Randomizer { get; set; }
+        [Required(ErrorMessage = "Please enter the total amount owed")]
+        public double? Total { get; set; }
+        [Required(ErrorMessage = "Please enter the amount paid by the customer")]
+        public double? Paid { get; set; }
+    }
+}
+
+<HeadContent><link rel="stylesheet" href="/css/Custom.css" /></HeadContent>
+<PageTitle>rwkraemer.com - Professional Examples Cash Register</PageTitle>
+<h1>Cash Register FUN</h1>
+<h5>
+    This is a simple page that allows you to enter how much a customer owes, how much they paid, and it will tell you the simpliest amount of bills and coins to return. <strong><em>UNLESS</em></strong> the amount
+    owed is <span class="text-success">divisible by the Randomizer set below</span>, in which case the bills and coins returned will be chosen at random (though still adding up to the correct amount).
+</h5>
+<div class="px-sm-5 py-5">
+
+    @if (register.Change < 0)
+    {
+        <EditForm EditContext="RegisterContext" OnValidSubmit="GetChange">
+            <DataAnnotationsValidator />
+            <fieldset>
+                <legend>Crazy Cash Register</legend>
+
+                <div>
+                    <label for="randomizer" class="form-label">Randomizer</label>
+                    <InputNumber id="total" step=".01" class="form-control" @bind-Value="register.Randomizer" />
+                    <ValidationMessage For="@(() => register.Randomizer)" />
+                </div>
+                <div>
+                    <label for="total" class="form-label">Total</label>
+                    <InputNumber id="total" step=".01" class="form-control" placeholder="Amount due" @bind-Value="register.Total" />
+                    <ValidationMessage For="@(() => register.Total)" />
+                </div>
+                <div>
+                    <label for="paid" class="form-label">Paid</label>
+                    <InputNumber id="paid" step=".01" class="form-control" placeholder="Amount paid by customer" @bind-Value="register.Paid" />
+                    <ValidationMessage For="@(() => register.Paid)" />
+                </div>
+                <button type="submit" class="btn btn-primary mt-3">Send</button>
+            </fieldset>
+        </EditForm>
+    }
+    else
+    {
+        <h3 class="@(isRandom ? "text-success" : "text-light")">Change: @register.Change.ToString("C2", new CultureInfo("en-US"))</h3>
+        <ul>
+            @foreach (var item in register.BillsAndCoins)
+            {
+                @if (item.Value > 0)
+                {
+                    <li>@item.Key: @item.Value</li>
+                }
+            }
+        </ul>
+        <button type="reset" class="btn btn-outline-secondary mt-3" @onclick="ResetRegister">Reset</button>
+    }
+</div>
